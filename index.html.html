@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Parts Logger | Marine Supplies Asia</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy: '#0B2A3B',
+            'navy-2': '#143E55',
+            cream: '#F5EEDC',
+            'cream-2': '#EADFC5',
+            rope: '#B8894D',
+            'rope-2': '#C77A1E',
+            green: '#1F8A4C',
+            red: '#B23A2F',
+            'ink-1': '#0B2A3B',
+            'ink-2': '#4A5A66',
+            'ink-3': '#8A98A2',
+            'line-1': '#DCD2BD',
+            'line-2': '#E5E0D2'
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  
+  <style>
+    body { background-color: #F5EEDC; color: #0B2A3B; }
+    .rope-divider {
+      height: 2px;
+      background-image: repeating-linear-gradient(90deg, #B8894D 0 8px, transparent 8px 14px);
+    }
+    .hatched-fill {
+      background-image: repeating-linear-gradient(45deg, #EADFC5 0 5px, #F5EEDC 5px 10px);
+    }
+    ::-webkit-scrollbar { display: none; }
+  </style>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <script src="combined_catalogue.js"></script>
+</head>
+<body class="antialiased font-sans h-screen flex justify-center bg-gray-900">
+
+  <div id="root" class="w-full max-w-[412px] h-full max-h-[844px] bg-cream relative overflow-hidden shadow-2xl"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const TECHNICIANS = ["Dave", "Daniel", "Din", "Fais", "Katiman", "Hafifi", "Fifo", "Ikhwan", "Saiful", "Timo"];
+
+    function App() {
+      // --- APP STATE ---
+      const [currentTech, setCurrentTech] = useState(() => localStorage.getItem('msa_current_tech') || null);
+      
+      const [screen, setScreen] = useState('home');
+      const [catalogue, setCatalogue] = useState([]);
+      const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+      const [activeProjectId, setActiveProjectId] = useState(null);
+      const [selectedProduct, setSelectedProduct] = useState(null);
+      const [unknownImage, setUnknownImage] = useState(null);
+      const [qty, setQty] = useState(1);
+      const [homeSearchQuery, setHomeSearchQuery] = useState("");
+      const [homeTab, setHomeTab] = useState('active'); 
+
+      const [projects, setProjects] = useState(() => {
+        try {
+          const saved = localStorage.getItem('msa_projects');
+          return saved ? JSON.parse(saved) : [];
+        } catch (e) {
+          console.error("Failed to load projects", e);
+          return [];
+        }
+      });
+
+      useEffect(() => {
+        localStorage.setItem('msa_projects', JSON.stringify(projects));
+      }, [projects]);
+
+      useEffect(() => {
+        if (currentTech) localStorage.setItem('msa_current_tech', currentTech);
+        else localStorage.removeItem('msa_current_tech');
+      }, [currentTech]);
+
+      useEffect(() => {
+        if (window.CATALOGUE_DATA) {
+          const formattedData = window.CATALOGUE_DATA.map(item => ({
+            name: item["Name"] || "Unnamed Product",
+            code: item["Internal Reference"] || ""
+          })).filter(item => item.code); 
+          setCatalogue(formattedData);
+        }
+      }, []);
+
+      const activeProject = projects.find(p => p.id === activeProjectId);
+
+      const exportToExcel = (project) => {
+        if (!project.items || project.items.length === 0) {
+          alert("No items have been logged in this project yet.");
+          return;
+        }
+
+        let csvContent = `Boat Project:,"${project.boatName}"\n`;
+        csvContent += `Created On:,"${project.createdAt || 'Unknown'}"\n`;
+        csvContent += `Status:,"${project.status === 'completed' ? 'DONE' : 'ONGOING'}"\n`;
+        csvContent += `Crew:,"${project.techs.join(', ')}"\n`;
+        
+        const cleanNotes = project.notes ? project.notes.replace(/\n/g, " ") : "None";
+        csvContent += `Project Notes:,"${cleanNotes}"\n\n`;
+        
+        csvContent += "Part Name,Internal Reference,Quantity Used\n";
+        
+        project.items.forEach(item => {
+          const name = `"${String(item.name).replace(/"/g, '""')}"`;
+          const code = `"${String(item.code).replace(/"/g, '""')}"`;
+          csvContent += `${name},${code},${item.qty}\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        
+        const cleanBoatName = project.boatName.replace(/[^a-zA-Z0-9]/g, '_');
+        link.download = `${cleanBoatName}_Parts_Log.csv`;
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      };
+
+      const markProjectComplete = (id) => {
+        if (window.confirm("Are you sure this project is done? It will be moved to your History.")) {
+          setProjects(projects.map(p => 
+            p.id === id ? { ...p, status: 'completed', completedAt: new Date().toLocaleDateString('en-GB') } : p
+          ));
+          setScreen('home');
+          setHomeTab('completed'); 
+        }
+      };
+
+      // --- DELETE PROJECT FUNCTION WITH DOUBLE CONFIRMATION ---
+      const deleteProject = (id) => {
+        if (window.confirm("⚠️ Are you sure you want to delete this project card?\n\nAll parts and notes will be permanently lost. This action CANNOT be undone.")) {
+          setProjects(projects.filter(p => p.id !== id));
+          setScreen('home');
+        }
+      };
+
+      const handleUnknownImageCapture = (e) => {
+        const file = e.target.files[0];
+        if(file) {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            setUnknownImage(reader.result);
+            setQty(1);
+            setScreen('unknownItemForm');
+          };
+          reader.readAsDataURL(file);
+        }
+      };
+
+      const handleScanSuccess = (decodedText) => {
+        const found = catalogue.find(p => p.code.trim().toLowerCase() === decodedText.trim().toLowerCase());
+        if (found) {
+          setSelectedProduct(found);
+          setQty(1);
+          setScreen('qtySelect');
+        } else {
+          alert("Barcode not found in catalogue: " + decodedText);
+          setScreen('jobDetails');
+        }
+      };
+
+      const updateItemQty = (projectId, itemId, delta) => {
+        setProjects(projects.map(p => {
+          if (p.id === projectId) {
+            const updatedItems = p.items.map(i => {
+              if (i.id === itemId) {
+                const newQty = i.qty + delta;
+                if (newQty <= 0) return null; 
+                return { ...i, qty: newQty };
+              }
+              return i;
+            }).filter(Boolean);
+            return { ...p, items: updatedItems };
+          }
+          return p;
+        }));
+      };
+
+      const addItemToLog = (product) => {
+        setProjects(projects.map(p => {
+          if (p.id === activeProjectId) {
+            return { ...p, items: [...p.items, { id: Date.now(), ...product, qty }] };
+          }
+          return p;
+        }));
+        setScreen('jobDetails');
+      };
+
+      // --- LOGIN SCREEN ---
+      const LoginScreen = () => {
+        return (
+          <div class="h-full flex flex-col bg-navy justify-center items-center p-6 relative">
+            <img src="msa-logo.png" class="h-24 mb-8 object-contain" alt="MSA Logo" />
+            <h1 class="text-cream text-2xl font-bold mb-2">Technician Portal</h1>
+            <p class="text-ink-3 text-sm mb-8">Select your name to log in</p>
+            
+            <div class="grid grid-cols-2 gap-4 w-full max-w-sm overflow-y-auto max-h-[50vh] pr-2 pb-4">
+              {TECHNICIANS.map(tech => (
+                <button 
+                  key={tech} 
+                  onClick={() => { setCurrentTech(tech); setScreen('home'); }}
+                  class="bg-white text-navy font-bold py-4 rounded-xl shadow-sm hover:bg-cream active:scale-95 transition-all border border-line-1"
+                >
+                  {tech}
+                </button>
+              ))}
+            </div>
+            <div class="rope-divider absolute bottom-0 left-0 right-0"></div>
+          </div>
+        );
+      };
+
+      // --- HOME SCREEN ---
+      const HomeScreen = () => {
+        const currentDate = new Date().toLocaleDateString('en-GB', {
+          day: 'numeric', month: 'long', year: 'numeric'
+        });
+
+        const filteredProjects = projects.filter(p => {
+          const isMyProject = p.techs.includes(currentTech);
+          const matchesTab = homeTab === 'active' ? p.status !== 'completed' : p.status === 'completed';
+          const matchesSearch = p.boatName.toLowerCase().includes(homeSearchQuery.toLowerCase()) || p.id.toLowerCase().includes(homeSearchQuery.toLowerCase());
+          return isMyProject && matchesTab && matchesSearch;
+        });
+
+        return (
+          <div class="h-full flex flex-col">
+            <div class="bg-navy p-6 rounded-b-[32px] shadow-lg relative flex-shrink-0">
+              <div class="flex justify-between items-start mb-6">
+                <div>
+                  <h1 class="text-cream text-2xl font-bold tracking-tight">Tech Portal</h1>
+                  <p class="text-line-1 text-sm mt-1">{currentDate}</p>
+                  <p class="text-rope font-bold text-sm mt-1">👤 {currentTech}</p>
+                </div>
+                <div class="flex flex-col items-end">
+                  <img src="msa-logo.png" class="h-8 w-auto object-contain mb-3" alt="MSA Logo" />
+                  <button onClick={() => setCurrentTech(null)} class="text-xs text-cream/70 underline hover:text-white">
+                    Log Out
+                  </button>
+                </div>
+              </div>
+
+              <div class="relative mt-2">
+                <input 
+                  type="text" 
+                  placeholder="Search my projects..." 
+                  value={homeSearchQuery}
+                  onChange={(e) => setHomeSearchQuery(e.target.value)}
+                  class="w-full bg-navy-2 text-cream border border-line-1/30 rounded-[14px] py-3 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-rope placeholder:text-ink-3"
+                />
+                <span class="absolute left-3 top-3 text-ink-3">🔍</span>
+              </div>
+              <div class="rope-divider absolute bottom-0 left-0 right-0"></div>
+            </div>
+
+            <div class="p-4 flex-1 overflow-y-auto">
+              <div class="flex gap-2 mb-4 bg-cream-2/50 p-1 rounded-xl border border-line-1">
+                <button 
+                  onClick={() => setHomeTab('active')} 
+                  class={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors ${homeTab === 'active' ? 'bg-navy text-cream shadow-sm' : 'text-navy/60'}`}
+                >
+                  Ongoing Projects
+                </button>
+                <button 
+                  onClick={() => setHomeTab('completed')} 
+                  class={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors ${homeTab === 'completed' ? 'bg-navy text-cream shadow-sm' : 'text-navy/60'}`}
+                >
+                  History (Done)
+                </button>
+              </div>
+              
+              <div class="space-y-4">
+                {filteredProjects.map(proj => (
+                  <div key={proj.id} onClick={() => { setActiveProjectId(proj.id); setScreen('jobDetails'); }} 
+                       class={`rounded-[12px] p-4 border cursor-pointer shadow-sm relative overflow-hidden transition-all ${proj.status === 'completed' ? 'bg-cream-2 border-line-1 opacity-80' : 'bg-navy text-cream border-navy/20 hover:bg-navy-2'}`}>
+                    
+                    <div class="flex justify-between items-start mb-2 relative z-10">
+                      <h3 class={`text-[24px] font-bold tracking-tight ${proj.status === 'completed' ? 'text-navy' : 'text-cream'}`}>{proj.boatName}</h3>
+                      <div class="bg-rope text-cream text-[14px] font-mono px-3 py-1 rounded-full">{proj.items.length} items</div>
+                    </div>
+                    
+                    <div class={`flex justify-between items-center font-mono text-[11px] mb-2 relative z-10 ${proj.status === 'completed' ? 'text-ink-2' : 'text-cream/70'}`}>
+                      <span>{proj.id}</span>
+                      <span class={`px-2 py-0.5 rounded ${proj.status === 'completed' ? 'bg-white font-bold' : 'bg-navy-2'}`}>
+                        {proj.status === 'completed' ? `Done: ${proj.completedAt}` : `Created: ${proj.createdAt || "Unknown"}`}
+                      </span>
+                    </div>
+                    
+                    {proj.notes && (
+                      <div class={`p-2 rounded text-xs italic mb-2 truncate relative z-10 ${proj.status === 'completed' ? 'bg-white/50 text-navy' : 'bg-white/10 text-cream/90'}`}>
+                        📝 {proj.notes}
+                      </div>
+                    )}
+
+                    <div class={`border-t border-dashed pt-3 text-[12px] mt-2 relative z-10 ${proj.status === 'completed' ? 'border-line-1 text-navy' : 'border-cream/20 text-cream/70'}`}>
+                      <span class={`uppercase text-[10px] tracking-wide block ${proj.status === 'completed' ? 'text-ink-3' : 'text-cream/50'}`}>Crew</span>
+                      {proj.techs.join(', ')}
+                    </div>
+                  </div>
+                ))}
+                
+                {filteredProjects.length === 0 && (
+                  <div class="hatched-fill rounded-[12px] h-32 border border-line-1 flex flex-col items-center justify-center shadow-sm text-center p-4">
+                    <p class="text-ink-2 font-medium">No {homeTab === 'active' ? 'ongoing' : 'completed'} projects.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div class="p-4 bg-cream pb-8 border-t border-line-1">
+              <button onClick={() => setShowNewProjectModal(true)} 
+                      class="w-full bg-navy text-cream font-medium py-4 rounded-[14px] text-[16px] shadow-sm">
+                + Create New Project
+              </button>
+            </div>
+          </div>
+        );
+      };
+
+      const JobDetailsScreen = () => {
+        const [isEditingNote, setIsEditingNote] = useState(false);
+        const [tempNote, setTempNote] = useState(activeProject ? activeProject.notes || "" : "");
+
+        if (!activeProject) return null;
+        const isCompleted = activeProject.status === 'completed';
+
+        const saveProjectNote = () => {
+          setProjects(projects.map(p => 
+            p.id === activeProject.id ? { ...p, notes: tempNote } : p
+          ));
+          setIsEditingNote(false);
+        };
+
+        return (
+          <div class="h-full flex flex-col bg-cream">
+            <div class="bg-navy text-cream pt-12 pb-6 px-4 relative flex-shrink-0">
+               <div class="flex justify-between items-start mb-2">
+                 <button onClick={() => setScreen('home')} class="text-rope font-medium text-sm">
+                   &larr; Back
+                 </button>
+                 <span class="text-[10px] text-line-1 uppercase tracking-widest bg-navy-2 px-2 py-0.5 rounded">
+                    {isCompleted ? "DONE" : "ONGOING"}
+                 </span>
+               </div>
+               <h2 class="text-[28px] font-bold tracking-tight mb-1">{activeProject.boatName}</h2>
+               <p class="text-sm text-cream/80">Crew: {activeProject.techs.join(', ')}</p>
+               <div class="rope-divider absolute bottom-0 left-0 right-0"></div>
+            </div>
+
+            <div class="p-4 flex-1 overflow-y-auto">
+              
+              <div class="bg-white rounded-[12px] border border-line-1 p-4 mb-6 shadow-sm">
+                <div class="flex justify-between items-center mb-2">
+                  <h3 class="text-[11px] uppercase tracking-[1.5px] text-navy/60 font-bold">Project Notes</h3>
+                  {!isCompleted && (
+                    <button 
+                      onClick={() => {
+                        if(isEditingNote) {
+                          setTempNote(activeProject.notes);
+                          setIsEditingNote(false);
+                        } else {
+                          setIsEditingNote(true);
+                        }
+                      }}
+                      class="text-rope text-xs font-bold underline"
+                    >
+                      {isEditingNote ? "CANCEL" : "EDIT NOTE"}
+                    </button>
+                  )}
+                </div>
+
+                {isEditingNote ? (
+                  <div class="space-y-3 mt-3">
+                    <textarea 
+                      value={tempNote}
+                      onChange={(e) => setTempNote(e.target.value)}
+                      placeholder="Enter technical updates or findings for this boat..."
+                      class="w-full h-32 p-3 border border-line-2 rounded-xl bg-cream-2/30 text-sm text-navy outline-none focus:border-rope focus:ring-1 focus:ring-rope"
+                    ></textarea>
+                    <button 
+                      onClick={saveProjectNote}
+                      class="w-full bg-navy text-cream py-3 rounded-xl font-bold text-sm"
+                    >
+                      Save Note to Card
+                    </button>
+                  </div>
+                ) : (
+                  <div class="mt-2 p-3 bg-cream-2/30 rounded-lg border border-line-2 min-h-[60px]">
+                    <p class="text-navy text-sm whitespace-pre-wrap">
+                      {activeProject.notes || <span class="italic text-ink-3">No notes added.</span>}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div class="flex justify-between items-center mb-4 mt-2">
+                <h3 class="text-[11px] uppercase tracking-[1.5px] text-navy/60 font-semibold">
+                  Products ({activeProject.items.length})
+                </h3>
+                
+                <div class="flex gap-2">
+                  {!isCompleted && (
+                    <button 
+                      onClick={() => markProjectComplete(activeProject.id)}
+                      class="bg-navy text-cream text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1 border border-navy hover:bg-navy-2"
+                    >
+                      ✔️ MARK AS DONE
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => exportToExcel(activeProject)}
+                    class="bg-[#1F8A4C] text-white text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1 active:scale-95 transition-transform"
+                  >
+                    📥 EXCEL
+                  </button>
+                </div>
+              </div>
+              
+              {activeProject.items.map(item => (
+                <div key={item.id} class={`bg-white rounded-[12px] border p-3 flex flex-col gap-3 mb-3 relative shadow-sm ${!isCompleted ? 'pr-10 border-line-1' : 'border-line-2 opacity-90'}`}>
+                  <div class="flex gap-3 items-start">
+                    {item.isUnknown ? (
+                      <img src={item.image} class="w-10 h-10 rounded border border-line-2 flex-shrink-0 object-cover" />
+                    ) : (
+                      <div class="w-10 h-10 hatched-fill rounded border border-line-2 flex-shrink-0 flex items-center justify-center text-xs">📦</div>
+                    )}
+                    <div class="flex-1 min-w-0">
+                      <p class="font-bold text-navy text-[14px] leading-tight">{item.name}</p>
+                      <p class="font-mono text-ink-3 text-[11px] mt-1">{item.code}</p>
+                    </div>
+                  </div>
+                  
+                  <div class="flex justify-end items-center">
+                    <div class="flex items-center bg-cream-2/30 border border-line-1 rounded-[8px] overflow-hidden">
+                      {!isCompleted && <button onClick={() => updateItemQty(activeProject.id, item.id, -1)} class="w-10 h-8 flex items-center justify-center bg-white text-navy font-bold hover:bg-cream-2">−</button>}
+                      <div class={`h-8 flex items-center justify-center bg-rope/10 font-mono text-rope font-bold text-[14px] ${isCompleted ? 'px-4 rounded' : 'w-10 border-x border-line-1'}`}>{item.qty}</div>
+                      {!isCompleted && <button onClick={() => updateItemQty(activeProject.id, item.id, 1)} class="w-10 h-8 flex items-center justify-center bg-white text-navy font-bold hover:bg-cream-2">+</button>}
+                    </div>
+                  </div>
+                  
+                  {!isCompleted && (
+                    <button onClick={() => updateItemQty(activeProject.id, item.id, -999)} class="absolute right-0 top-0 bottom-0 w-10 bg-red/5 text-red/60 hover:bg-red/10 flex items-center justify-center border-l border-red/10 rounded-r-[12px]">✕</button>
+                  )}
+                </div>
+              ))}
+
+              {/* DELETE PROJECT BUTTON */}
+              <div class="mt-8 pt-6 border-t border-line-2 flex justify-center pb-4">
+                <button 
+                  onClick={() => deleteProject(activeProject.id)}
+                  class="text-red font-bold text-xs px-4 py-2 flex items-center gap-2 hover:bg-red/10 rounded-lg transition-colors border border-transparent hover:border-red/20"
+                >
+                  🗑️ Delete Project Card
+                </button>
+              </div>
+
+            </div>
+
+            {!isCompleted && (
+              <div class="p-4 bg-cream pb-8 border-t border-line-1 flex flex-col gap-2 flex-shrink-0">
+                <button onClick={() => setScreen('search')} class="w-full bg-rope text-cream font-medium py-4 rounded-[14px] text-[16px] flex justify-center items-center gap-2 shadow-sm">
+                  🔍 ADD FROM CATALOGUE
+                </button>
+                <div class="flex gap-2">
+                  <button onClick={() => setScreen('scan')} class="flex-1 bg-transparent border border-navy text-navy font-medium py-3 rounded-[14px] text-[14px]">
+                    📷 Scan Barcode
+                  </button>
+                  <label class="flex-1 bg-transparent border border-navy text-navy font-medium py-3 rounded-[14px] text-[14px] flex items-center justify-center cursor-pointer">
+                    ❓ Log Unknown Item
+                    <input type="file" accept="image/*" capture="environment" class="hidden" onChange={handleUnknownImageCapture} />
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const ScanScreen = () => {
+        useEffect(() => {
+          const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
+          scanner.render(
+            (decodedText) => {
+              scanner.clear();
+              handleScanSuccess(decodedText);
+            },
+            (error) => {} 
+          );
+          return () => { scanner.clear().catch(e => console.error(e)); };
+        }, []);
+
+        return (
+          <div class="h-full flex flex-col bg-navy pt-12">
+            <div class="px-4 pb-4 flex justify-between items-center text-cream">
+              <h2 class="font-bold">Scan Barcode</h2>
+              <button onClick={() => setScreen('jobDetails')} class="text-rope">Cancel</button>
+            </div>
+            <div class="flex-1 bg-black flex flex-col items-center justify-center">
+              <div id="reader" class="w-full max-w-[320px] bg-white rounded overflow-hidden"></div>
+              <p class="text-white mt-6 font-mono text-xs text-center">Point camera at barcode</p>
+            </div>
+          </div>
+        );
+      };
+
+      const UnknownItemFormScreen = () => {
+        const [notes, setNotes] = useState('');
+        
+        const handleSave = () => {
+          addItemToLog({
+            name: "Unknown: " + (notes || "No description provided"),
+            code: "PENDING-ID",
+            isUnknown: true,
+            image: unknownImage
+          });
+        };
+
+        return (
+          <div class="h-full flex flex-col bg-cream pt-12">
+            <div class="px-4 pb-4 flex justify-between items-center border-b border-line-1">
+              <h2 class="font-bold text-navy">Log Unknown Item</h2>
+              <button onClick={() => setScreen('jobDetails')} class="text-ink-3">Cancel</button>
+            </div>
+            <div class="p-4 flex-1 overflow-y-auto space-y-6">
+              <img src={unknownImage} class="w-full h-48 object-cover rounded-[12px] border border-line-1 shadow-sm" />
+              
+              <div>
+                <label class="block text-[11px] uppercase tracking-[1.5px] text-navy/60 font-semibold mb-2">Description / Location</label>
+                <textarea rows="3" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Broken impeller, found in port hull..." class="w-full p-3 rounded-[12px] border border-line-1 bg-white outline-none focus:border-rope text-navy"></textarea>
+              </div>
+
+              <div class="flex items-center justify-between bg-white p-4 rounded-[12px] border border-line-1">
+                <span class="font-bold text-navy">Quantity Used</span>
+                <div class="flex items-center gap-4">
+                  <button onClick={() => setQty(Math.max(1, qty - 1))} class="w-10 h-10 bg-navy text-cream rounded-[8px] text-xl font-bold">−</button>
+                  <span class="text-2xl font-mono font-bold text-navy w-10 text-center">{qty}</span>
+                  <button onClick={() => setQty(qty + 1)} class="w-10 h-10 bg-navy text-cream rounded-[8px] text-xl font-bold">+</button>
+                </div>
+              </div>
+            </div>
+            <div class="p-4 border-t border-line-1 pb-8">
+              <button onClick={handleSave} class="w-full bg-navy text-cream font-medium py-4 rounded-[14px]">💾 Save to Log</button>
+            </div>
+          </div>
+        );
+      };
+
+      const QtySelectScreen = () => {
+        return (
+          <div class="h-full flex flex-col bg-cream p-4 pt-12">
+            <h2 class="text-[20px] font-bold text-navy mb-6">Enter Quantity</h2>
+            <div class="bg-white rounded-[12px] border border-line-1 p-4 mb-6 shadow-sm">
+              <p class="font-bold text-navy mb-1">{selectedProduct.name}</p>
+              <p class="font-mono text-ink-3 text-sm">{selectedProduct.code}</p>
+            </div>
+            <div class="flex items-center justify-center gap-6 mb-8">
+              <button onClick={() => setQty(Math.max(1, qty - 1))} class="w-14 h-14 bg-navy text-cream rounded-[12px] text-2xl font-bold">−</button>
+              <span class="text-5xl font-mono font-bold text-navy w-20 text-center">{qty}</span>
+              <button onClick={() => setQty(qty + 1)} class="w-14 h-14 bg-navy text-cream rounded-[12px] text-2xl font-bold">+</button>
+            </div>
+            <div class="mt-auto flex gap-3 pb-8">
+              <button onClick={() => setScreen('search')} class="flex-1 border border-navy text-navy font-medium py-4 rounded-[14px]">Cancel</button>
+              <button onClick={() => addItemToLog(selectedProduct)} class="flex-1 bg-navy text-cream font-medium py-4 rounded-[14px]">💾 Save to Log</button>
+            </div>
+          </div>
+        );
+      };
+
+      const SearchScreen = () => {
+        const [query, setQuery] = useState('');
+        
+        const results = query ? catalogue.filter(p => 
+          p.name.toLowerCase().includes(query.toLowerCase()) || 
+          p.code.toLowerCase().includes(query.toLowerCase())
+        ).slice(0, 50) : catalogue.slice(0, 50);
+
+        return (
+          <div class="h-full flex flex-col bg-cream">
+            <div class="bg-navy p-4 pt-12 flex gap-3 items-center flex-shrink-0">
+               <button onClick={() => setScreen('jobDetails')} class="text-cream text-xl">&larr;</button>
+               <input type="text" autoFocus placeholder="Search Catalogue..." value={query} onChange={e => setQuery(e.target.value)}
+                      class="flex-1 bg-white border-0 rounded-[8px] p-3 text-navy font-medium outline-none" />
+            </div>
+            <div class="p-4 flex-1 overflow-y-auto">
+              <h3 class="text-[11px] uppercase tracking-[1.5px] text-navy/60 font-semibold mb-3">RESULTS ({results.length} shown)</h3>
+              <div class="space-y-2">
+                {results.map(p => (
+                  <div key={p.code} onClick={() => { setSelectedProduct(p); setQty(1); setScreen('qtySelect'); }} 
+                       class="bg-white rounded-[12px] border border-line-1 p-3 cursor-pointer hover:border-rope flex flex-col shadow-sm">
+                    <span class="font-bold text-navy text-[14px] truncate">{p.name}</span>
+                    <div class="flex justify-start items-center mt-1">
+                      <span class="font-mono text-ink-3 text-[11px]">{p.code}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const NewProjectModal = () => {
+        const [boatName, setBoatName] = useState('');
+        const [selectedTechs, setSelectedTechs] = useState([currentTech]);
+        const [initialNote, setInitialNote] = useState('');
+
+        if (!showNewProjectModal) return null;
+
+        const handleSave = () => {
+          if (!boatName || selectedTechs.length === 0) return;
+          const newId = `PRJ-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+          
+          const createdDate = new Date().toLocaleDateString('en-GB', {
+            day: 'numeric', month: 'short', year: 'numeric'
+          });
+
+          setProjects([{ 
+            id: newId, 
+            boatName, 
+            techs: selectedTechs, 
+            items: [], 
+            notes: initialNote,
+            createdAt: createdDate,
+            status: 'active' 
+          }, ...projects]);
+          
+          setBoatName('');
+          setInitialNote('');
+          setSelectedTechs([currentTech]);
+          setShowNewProjectModal(false);
+          setHomeTab('active'); 
+        };
+
+        return (
+          <div class="absolute inset-0 bg-navy/80 z-50 flex flex-col justify-end">
+            <div class="bg-cream h-[90%] rounded-t-[24px] p-6 flex flex-col">
+              <div class="flex justify-between items-center mb-6">
+                <h2 class="text-[20px] font-bold text-navy">New Boat Project</h2>
+                <button onClick={() => setShowNewProjectModal(false)} class="text-ink-3 font-bold text-2xl">&times;</button>
+              </div>
+              <div class="flex-1 overflow-y-auto space-y-6">
+                <div>
+                  <label class="block text-[11px] uppercase tracking-[1.5px] text-navy/60 font-semibold mb-2">Boat Name / Reg</label>
+                  <input type="text" value={boatName} onChange={e => setBoatName(e.target.value)} placeholder="e.g. SV Sula" 
+                         class="w-full bg-white border border-line-1 rounded-[12px] p-4 text-navy font-medium outline-none focus:border-rope"/>
+                </div>
+                
+                <div>
+                  <label class="block text-[11px] uppercase tracking-[1.5px] text-navy/60 font-semibold mb-2">Initial Note (Optional)</label>
+                  <textarea rows="2" value={initialNote} onChange={e => setInitialNote(e.target.value)} placeholder="E.g. Port side engine check..." 
+                         class="w-full bg-white border border-line-1 rounded-[12px] p-4 text-navy text-sm outline-none focus:border-rope"></textarea>
+                </div>
+
+                <div>
+                  <label class="block text-[11px] uppercase tracking-[1.5px] text-navy/60 font-semibold mb-2">Select Additional Crew</label>
+                  <div class="flex flex-wrap gap-2">
+                    {TECHNICIANS.map(tech => (
+                      <button key={tech} onClick={() => setSelectedTechs(prev => prev.includes(tech) ? prev.filter(t => t !== tech) : [...prev, tech])}
+                              class={`px-4 py-2 rounded-full border text-[14px] font-medium transition-colors ${selectedTechs.includes(tech) ? 'bg-navy text-cream border-navy' : 'bg-white text-ink-2 border-line-1'}`}>
+                        {tech}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div class="pt-4 mt-auto border-t border-line-1 pb-4">
+                <button onClick={handleSave} disabled={!boatName || selectedTechs.length === 0}
+                        class="w-full bg-navy text-cream font-medium py-4 rounded-[14px] text-[16px] disabled:opacity-50 shadow-sm">
+                  Create Project Card
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      if (!currentTech) {
+        return <LoginScreen />;
+      }
+
+      return (
+        <div class="relative w-full h-full">
+          {screen === 'home' && <HomeScreen />}
+          {screen === 'jobDetails' && <JobDetailsScreen />}
+          {screen === 'search' && <SearchScreen />}
+          {screen === 'scan' && <ScanScreen />}
+          {screen === 'qtySelect' && <QtySelectScreen />}
+          {screen === 'unknownItemForm' && <UnknownItemFormScreen />}
+          <NewProjectModal />
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
